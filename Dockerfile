@@ -1,6 +1,9 @@
-FROM python:3.11-slim-bookworm AS builder
+# Use ARM-compatible base image
+FROM arm32v7/python:3.11-slim-bookworm AS builder
 ARG REBUILD_HNSWLIB
 ARG PROTOBUF_VERSION=28.2
+
+# Install necessary build tools and dependencies
 RUN apt-get update --fix-missing && apt-get install -y --fix-missing \
     build-essential \
     gcc \
@@ -14,17 +17,19 @@ RUN apt-get update --fix-missing && apt-get install -y --fix-missing \
     rm -rf /var/lib/apt/lists/* && \
     mkdir /install
 
-# Install specific Protobuf compiler (v28.2)
-RUN curl -LO https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOBUF_VERSION}/protoc-${PROTOBUF_VERSION}-linux-x86_64.zip && \
-    unzip protoc-${PROTOBUF_VERSION}-linux-x86_64.zip -d /usr/local/ && \
-    rm protoc-${PROTOBUF_VERSION}-linux-x86_64.zip && \
-    chmod +x /usr/local/bin/protoc && \
+# Install specific Protobuf compiler for ARM (use source build if precompiled not available)
+RUN apt-get update && apt-get install -y autoconf automake libtool curl make g++ unzip git && \
+    git clone https://github.com/protocolbuffers/protobuf.git && \
+    cd protobuf && git checkout v${PROTOBUF_VERSION} && \
+    git submodule update --init --recursive && \
+    ./autogen.sh && ./configure && make && make install && ldconfig && \
     protoc --version  # Verify installed version
 
 WORKDIR /install
 
 COPY ./requirements.txt requirements.txt
 
+# Install Python dependencies
 RUN --mount=type=cache,target=/root/.cache/pip pip install --upgrade --prefix="/install" -r requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip if [ "$REBUILD_HNSWLIB" = "true" ]; then pip install --no-binary :all: --force-reinstall --prefix="/install" chroma-hnswlib; fi
 
@@ -38,7 +43,7 @@ COPY ./ /chroma
 WORKDIR /chroma
 RUN make -C idl proto_python
 
-FROM python:3.11-slim-bookworm AS final
+FROM arm32v7/python:3.11-slim-bookworm AS final
 
 # Create working directory
 RUN mkdir /chroma
